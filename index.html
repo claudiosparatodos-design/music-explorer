@@ -3,43 +3,56 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Music Explorer</title>
+  <title>Mac Miller — Music Explorer</title>
   <link rel="stylesheet" href="style.css" />
 </head>
 <body>
   <header class="header">
-    <h1 class="title">Music Explorer</h1>
-    <p class="subtitle">Search an artist and browse their songs grouped by album.</p>
-
-    <!-- A form gives us Enter-to-submit for free -->
-    <form class="search" id="search-form" autocomplete="off">
-      <input
-        class="search__input"
-        id="search-input"
-        type="search"
-        name="term"
-        placeholder="e.g. Daft Punk, Radiohead, Bad Bunny…"
-        aria-label="Artist name"
-        required
-      />
-      <button class="search__button" type="submit" id="search-button">Search</button>
-    </form>
+    <p class="eyebrow">Artist profile</p>
+    <h1 class="title">Mac Miller</h1>
+    <p class="subtitle">
+      Curious statistics pulled from his catalogue on the iTunes Store.
+    </p>
   </header>
 
   <main class="main">
-    <!-- Single status region reused for loading / empty / error messages.
+    <!-- Status region reused for loading and error messages.
          aria-live so screen readers announce state changes. -->
     <div class="status" id="status" role="status" aria-live="polite"></div>
 
-    <!-- Summary line shown above the results (album/track counts) -->
-    <p class="results-summary" id="results-summary" hidden></p>
+    <!-- Only shown after a search succeeds, so a failure never reveals a half-built page -->
+    <div id="content" hidden>
 
-    <!-- Album cards are rendered here -->
-    <section class="albums" id="albums" aria-label="Albums"></section>
+      <!-- Headline numbers: the four figures that frame everything below -->
+      <section class="hero" id="hero" aria-label="Headline numbers"></section>
 
-    <!-- Reveals the albums beyond the display cap, so nothing is hidden silently -->
-    <div class="show-more">
-      <button class="show-more__button" type="button" id="show-more-button" hidden></button>
+      <section class="section">
+        <h2 class="section__title">Curious facts</h2>
+        <p class="section__note">Everything here is computed from the songs listed below — not from chart or streaming data.</p>
+        <div class="facts" id="facts"></div>
+      </section>
+
+      <section class="section">
+        <h2 class="section__title">Songs released per year</h2>
+        <p class="section__note" id="chart-note"></p>
+        <!-- Bar chart is built in JS; the table below carries the same numbers for screen readers -->
+        <div class="chart" id="chart"></div>
+        <table class="visually-hidden" id="chart-table"></table>
+      </section>
+
+      <section class="section">
+        <h2 class="section__title">Albums</h2>
+        <p class="section__note" id="albums-summary"></p>
+        <div class="albums" id="albums"></div>
+        <div class="show-more">
+          <button class="button button--ghost" type="button" id="show-more-button" hidden></button>
+        </div>
+      </section>
+    </div>
+
+    <!-- Lets the user recover from a network error without reloading the page -->
+    <div class="retry">
+      <button class="button" type="button" id="retry-button" hidden>Try again</button>
     </div>
   </main>
 
