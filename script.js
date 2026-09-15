@@ -8,7 +8,14 @@
 'use strict';
 
 const API_URL = 'https://itunes.apple.com/search';
-const RESULT_LIMIT = 200; // API max; keeps one request enough for most artists
+
+// Deliberately small working set. The API allows up to 200 songs per request,
+// but a smaller slice keeps the payload predictable and the page readable.
+// The cost is that long discographies come back partially — the cards say so.
+const RESULT_LIMIT = 50;
+
+// Albums rendered before the "show all" button appears.
+const ALBUM_DISPLAY_LIMIT = 6;
 
 // DOM references, looked up once.
 const form = document.getElementById('search-form');
@@ -17,9 +24,15 @@ const button = document.getElementById('search-button');
 const statusEl = document.getElementById('status');
 const summaryEl = document.getElementById('results-summary');
 const albumsEl = document.getElementById('albums');
+const showMoreButton = document.getElementById('show-more-button');
 
 // Tracks the in-flight request so a newer search can cancel an older one.
 let activeController = null;
+
+// Current result set, kept so the "show all" toggle can re-render without refetching.
+let currentAlbums = [];
+let currentTerm = '';
+let showingAllAlbums = false;
 
 /* ------------------------------------------------------------------ */
 /* 1. FETCH                                                            */
@@ -117,6 +130,9 @@ function groupSongsByAlbum(songs) {
         artwork: song.artworkUrl100 ? song.artworkUrl100.replace('100x100', '300x300') : '',
         releaseDate: song.releaseDate || '',
         genre: song.primaryGenreName || '',
+        // How many songs the album really has, per the API. We may have fetched
+        // fewer of them, and the card is explicit about that.
+        totalTrackCount: Number.isFinite(song.trackCount) ? song.trackCount : null,
         tracks: [],
       });
     }
@@ -145,6 +161,9 @@ function groupSongsByAlbum(songs) {
     const totalMillis = timedTracks.reduce((sum, track) => sum + track.millis, 0);
 
     album.trackCount = album.tracks.length;
+    // True when the fetch limit gave us only part of this album.
+    album.isPartial =
+      album.totalTrackCount != null && album.totalTrackCount > album.trackCount;
     album.totalDuration = timedTracks.length ? formatDuration(totalMillis) : '--:--';
     album.averageDuration = timedTracks.length
       ? formatDuration(totalMillis / timedTracks.length)
@@ -189,6 +208,8 @@ function clearResults() {
   albumsEl.replaceChildren();
   summaryEl.hidden = true;
   summaryEl.textContent = '';
+  showMoreButton.hidden = true;
+  currentAlbums = [];
 }
 
 /**
@@ -229,8 +250,16 @@ function renderAlbumCard(album) {
   const facts = document.createElement('p');
   facts.className = 'album__facts';
   const trackLabel = album.trackCount === 1 ? 'track' : 'tracks';
-  facts.textContent =
-    `${album.trackCount} ${trackLabel} · total ${album.totalDuration} · avg ${album.averageDuration}`;
+  // Be explicit when the fetch limit means we only have part of the album:
+  // the totals below are for the songs shown, not the whole record.
+  const countText = album.isPartial
+    ? `${album.trackCount} of ${album.totalTrackCount} tracks`
+    : `${album.trackCount} ${trackLabel}`;
+  facts.textContent = `${countText} · total ${album.totalDuration} · avg ${album.averageDuration}`;
+  if (album.isPartial) {
+    facts.classList.add('album__facts--partial');
+    facts.title = 'Only part of this album was returned by the search; totals cover the songs shown.';
+  }
 
   meta.append(name, artist, facts);
   header.append(art, meta);
@@ -265,21 +294,47 @@ function renderAlbumCard(album) {
 }
 
 /**
- * Render the full album list plus the summary line.
+ * Store a result set and paint it. Called once per successful search.
  * @param {Array<object>} albums
  * @param {string} term
  */
 function renderAlbums(albums, term) {
-  const totalTracks = albums.reduce((sum, album) => sum + album.trackCount, 0);
-  summaryEl.textContent =
-    `${albums.length} album${albums.length === 1 ? '' : 's'} · ` +
-    `${totalTracks} song${totalTracks === 1 ? '' : 's'} for "${term}"`;
+  currentAlbums = albums;
+  currentTerm = term;
+  showingAllAlbums = false; // every new search starts collapsed
+  paintAlbums();
+}
+
+/**
+ * Paint the album grid, the summary line and the "show all" button from the
+ * stored result set. Toggling only re-renders — it never refetches.
+ */
+function paintAlbums() {
+  const total = currentAlbums.length;
+  const capped = !showingAllAlbums && total > ALBUM_DISPLAY_LIMIT;
+  const visible = capped ? currentAlbums.slice(0, ALBUM_DISPLAY_LIMIT) : currentAlbums;
+
+  const shownTracks = visible.reduce((sum, album) => sum + album.trackCount, 0);
+  summaryEl.textContent = capped
+    ? `Showing the ${visible.length} most recent of ${total} albums for "${currentTerm}"`
+    : `${total} album${total === 1 ? '' : 's'} · ` +
+      `${shownTracks} song${shownTracks === 1 ? '' : 's'} for "${currentTerm}"`;
   summaryEl.hidden = false;
 
   // Build off-screen and attach once, so the browser lays out a single time.
   const fragment = document.createDocumentFragment();
-  albums.forEach((album) => fragment.append(renderAlbumCard(album)));
+  visible.forEach((album) => fragment.append(renderAlbumCard(album)));
   albumsEl.replaceChildren(fragment);
+
+  // The button only exists when there is something left to reveal.
+  if (total > ALBUM_DISPLAY_LIMIT) {
+    showMoreButton.hidden = false;
+    showMoreButton.textContent = showingAllAlbums
+      ? `Show fewer albums`
+      : `Show all ${total} albums`;
+  } else {
+    showMoreButton.hidden = true;
+  }
 }
 
 /* ------------------------------------------------------------------ */
@@ -326,6 +381,11 @@ async function search(term) {
     }
   }
 }
+
+showMoreButton.addEventListener('click', () => {
+  showingAllAlbums = !showingAllAlbums;
+  paintAlbums();
+});
 
 form.addEventListener('submit', (event) => {
   event.preventDefault();
