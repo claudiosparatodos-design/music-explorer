@@ -50,11 +50,17 @@ open index.html      # macOS
 
 ### Why this works from a `file://` URL
 
-The iTunes API sends permissive CORS headers, so a page opened straight from disk is allowed to call it. That is the main reason this API was chosen — no proxy, no backend, no local server.
+The iTunes API is callable from the browser, so there is no proxy, no backend and no local server — the main reason this API was chosen.
+
+One wrinkle is worth knowing about. A page opened from disk has no real origin, so the browser sends `Origin: null`, and that is rejected often enough that a plain `fetch` cannot be relied on from `file://`. The app therefore tries the direct request first and **falls back to JSONP** when it fails at the network level — see [Two ways in](#two-ways-in). If you would rather avoid the fallback entirely, serve the folder over HTTP instead, which gives the page a normal origin:
+
+```bash
+python3 -m http.server 8000     # then open http://localhost:8000
+```
 
 Tested in current Chromium-based browsers, Firefox and Safari. The only modern APIs used are `fetch` and `Element.replaceChildren`.
 
-**If the page shows an error instead of data**, your network is blocking `itunes.apple.com` — a corporate proxy, a VPN or an ad-blocker will do it. The **Try again** button re-runs the request without a reload.
+**If the page shows an error instead of data**, both routes were blocked — usually a corporate proxy, a VPN or an ad-blocker stopping `itunes.apple.com`. The error carries a link to the raw API URL: if that page does not load in a new tab either, the block is on the network rather than in this code. The **Try again** button re-runs the request without a reload.
 
 ## Data source & why
 
@@ -67,9 +73,20 @@ Request: `term=Mac Miller`, `attribute=artistTerm`, `media=music`, `entity=song`
 Chosen because it fits the constraints of a ~4-hour exercise:
 
 - **Free and no API key** — nothing to register, nothing to keep out of the repo, and a reviewer can run it immediately.
-- **CORS enabled** — callable straight from the browser, so `index.html` opens from disk with no server.
+- **Browser-callable** — no proxy or backend needed, and it offers both CORS and JSONP, which is what lets the page survive being opened from a `file://` URL.
 - **The data actually needs transforming.** The API returns a *flat list of songs*. Neither the album structure nor a single statistic on this page exists in the response — all of it is derived client-side. That work is the point of the exercise.
 - **Bounded by design.** One artist is a small, predictable dataset: a couple of hundred songs at most, one request, no pagination logic needed.
+
+### Two ways in
+
+`fetchSongs` tries two routes, in order:
+
+1. **A plain `fetch`.** The normal path, used whenever it works.
+2. **JSONP**, only if the first fails at the network level. The API accepts a `callback` parameter and wraps its JSON in a call to that function; loading it through a `<script>` tag sidesteps CORS entirely, since script tags were never subject to it.
+
+The distinction matters for *when* the fallback fires. `fetch` rejects identically for offline, DNS failure, a blocked request and a refused CORS check — the browser deliberately hides which — so a rejection is worth a second attempt. An HTTP error status is not: it proves the network works, so it surfaces immediately instead of wasting a retry. The JSONP call carries a 12-second timeout, because a `<script>` tag that never loads would otherwise hang the page forever.
+
+The trade-off is real and worth stating: **JSONP executes whatever the server returns as code.** That is acceptable for a first-party Apple endpoint over HTTPS. It would not be for an untrusted API, and it is not a pattern to reach for by default — here it buys the "just open index.html" promise that the exercise's brief asked for.
 
 ## How the data is transformed
 
@@ -104,7 +121,9 @@ The goal is that nothing leaves the user staring at a blank page, and the page i
 
 | Case | Behaviour |
 | --- | --- |
-| Network failure (offline, DNS, blocked, timeout) | `fetch` rejects, caught in `try/catch`: "Could not reach the iTunes API…" plus a **Try again** button |
+| Network or CORS failure | `fetch` rejects, caught in `try/catch`; the JSONP fallback is tried before giving up |
+| Both routes blocked | One message naming the likely cause (firewall, VPN, ad-blocker), a link to the raw API URL so the user can tell a blocked network from a bug in this page, and a **Try again** button |
+| JSONP script that never loads | A 12-second timeout rejects it, rather than leaving the page loading forever |
 | Non-OK HTTP status | The code is surfaced: "The iTunes API responded with an error (HTTP 500)." |
 | HTTP 200 with a non-JSON body | Caught when parsing: "The iTunes API returned an unreadable response." |
 | HTTP 200 carrying an `errorMessage` field | The API's own message is shown — iTunes does not always signal errors with status codes |

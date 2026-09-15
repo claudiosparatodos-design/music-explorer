@@ -59,31 +59,56 @@ let showingAllAlbums = false;
 /* ------------------------------------------------------------------ */
 
 /**
- * Fetch the artist's songs.
- * Throws an Error carrying a user-friendly message on failure.
- * @returns {Promise<Array<object>>} raw iTunes song objects
+ * Build the query. URLSearchParams encodes the term safely (spaces, accents,
+ * &, etc.). attribute=artistTerm matches the artist field rather than any
+ * text, so we get songs *by* the artist instead of every track mentioning him.
+ * @returns {URLSearchParams}
  */
-async function fetchSongs() {
-  // URLSearchParams encodes the term safely (spaces, accents, &, etc.).
-  // attribute=artistTerm matches the artist field rather than any text, so we
-  // get songs *by* Mac Miller instead of every track that mentions him.
-  const params = new URLSearchParams({
+function buildParams() {
+  return new URLSearchParams({
     term: ARTIST,
     attribute: 'artistTerm',
     media: 'music',
     entity: 'song',
     limit: String(RESULT_LIMIT),
   });
+}
 
+/**
+ * Pull the results array out of a parsed API payload, or throw if the payload
+ * is an error rather than a result set.
+ * @param {object} data
+ * @returns {Array<object>}
+ */
+function readResults(data) {
+  // iTunes can answer with an error payload instead of results.
+  if (data && data.errorMessage) {
+    throw new Error(`The iTunes API rejected the request: ${data.errorMessage}`);
+  }
+  return data && Array.isArray(data.results) ? data.results : [];
+}
+
+/**
+ * Normal path: a plain CORS request.
+ * @param {URLSearchParams} params
+ * @returns {Promise<Array<object>>}
+ */
+async function fetchViaCors(params) {
   let response;
   try {
     response = await fetch(`${API_URL}?${params}`);
-  } catch {
-    // Network-level failure: offline, DNS, timeout, blocked request.
-    throw new Error('Could not reach the iTunes API. Check your internet connection and try again.');
+  } catch (cause) {
+    // fetch() rejects for offline, DNS, timeout, a blocked request *and* a
+    // failed CORS preflight — the browser deliberately hides which. Flag it so
+    // the caller knows the JSONP fallback is worth trying.
+    const error = new Error('Direct request failed.');
+    error.isNetworkError = true;
+    error.cause = cause;
+    throw error;
   }
 
   // The request completed, but the server answered with an error status.
+  // The network clearly works, so there is no point falling back.
   if (!response.ok) {
     throw new Error(`The iTunes API responded with an error (HTTP ${response.status}). Please try again in a moment.`);
   }
@@ -96,12 +121,88 @@ async function fetchSongs() {
     throw new Error('The iTunes API returned an unreadable response. Please try again.');
   }
 
-  // iTunes can return HTTP 200 with an error payload instead of results.
-  if (data && data.errorMessage) {
-    throw new Error(`The iTunes API rejected the request: ${data.errorMessage}`);
-  }
+  return readResults(data);
+}
 
-  return Array.isArray(data.results) ? data.results : [];
+/**
+ * Fallback path: JSONP.
+ *
+ * The iTunes API accepts a `callback` parameter and will wrap its JSON in a
+ * call to that function. Loading that through a <script> tag sidesteps CORS
+ * entirely, which matters when the page is opened from a file:// URL — the
+ * browser then sends `Origin: null`, and that is rejected often enough to make
+ * a fallback worthwhile.
+ *
+ * The trade-off is real: JSONP runs whatever the server sends as code. That is
+ * acceptable for a first-party Apple endpoint over HTTPS; it would not be for
+ * an untrusted API.
+ *
+ * @param {URLSearchParams} params
+ * @returns {Promise<Array<object>>}
+ */
+function fetchViaJsonp(params) {
+  return new Promise((resolve, reject) => {
+    // Unique name so overlapping calls cannot clobber each other.
+    const callbackName = `itunesJsonp_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
+    const script = document.createElement('script');
+    // A <script> that never loads would otherwise hang the page forever.
+    const timer = setTimeout(() => {
+      cleanup();
+      reject(new Error('The fallback request timed out.'));
+    }, 12000);
+
+    function cleanup() {
+      clearTimeout(timer);
+      delete window[callbackName];
+      script.remove();
+    }
+
+    window[callbackName] = (data) => {
+      cleanup();
+      try {
+        resolve(readResults(data));
+      } catch (error) {
+        reject(error);
+      }
+    };
+
+    script.onerror = () => {
+      cleanup();
+      reject(new Error('The fallback request failed.'));
+    };
+
+    script.src = `${API_URL}?${params}&callback=${callbackName}`;
+    document.head.append(script);
+  });
+}
+
+/**
+ * Fetch the artist's songs, trying the direct request first and falling back
+ * to JSONP only when the direct one fails at the network/CORS level.
+ * Throws an Error carrying a user-friendly message when both routes fail.
+ * @returns {Promise<Array<object>>} raw iTunes song objects
+ */
+async function fetchSongs() {
+  const params = buildParams();
+
+  try {
+    return await fetchViaCors(params);
+  } catch (error) {
+    // An HTTP status or a bad payload means the network is fine — surface it.
+    if (!error.isNetworkError) throw error;
+
+    try {
+      return await fetchViaJsonp(params);
+    } catch {
+      // Both routes are down. At this point it is the network, not the page.
+      const failure = new Error(
+        'Could not reach the iTunes API — the direct request and the CORS-free fallback both failed. '
+        + 'A corporate firewall, VPN or ad-blocker blocking itunes.apple.com is the usual cause.',
+      );
+      failure.showApiLink = true;
+      throw failure;
+    }
+  }
 }
 
 /* ------------------------------------------------------------------ */
@@ -348,10 +449,27 @@ function computeStats(songs, albums) {
  * Show a message in the status area.
  * @param {string} message
  * @param {boolean} [isError]
+ * @param {boolean} [withApiLink] append a link that opens the raw API URL, so
+ *   the user can tell a blocked network apart from a bug in this page
  */
-function showStatus(message, isError = false) {
+function showStatus(message, isError = false, withApiLink = false) {
   statusEl.textContent = message;
   statusEl.classList.toggle('status--error', isError);
+
+  if (!withApiLink) return;
+
+  const hint = el('p', 'status__hint');
+  hint.append(document.createTextNode('Open '));
+  const link = document.createElement('a');
+  link.href = `${API_URL}?${buildParams()}`;
+  link.target = '_blank';
+  link.rel = 'noopener noreferrer';
+  link.textContent = 'the API URL directly';
+  hint.append(link);
+  hint.append(document.createTextNode(
+    ' — if that page does not load either, the block is on your network, not in this page.',
+  ));
+  statusEl.append(hint);
 }
 
 function clearStatus() {
@@ -689,7 +807,11 @@ async function load() {
   } catch (error) {
     // Everything surfaces as a readable message; the page stays usable and the
     // retry button lets the user recover without reloading.
-    showStatus(error.message || 'Something went wrong. Please try again.', true);
+    showStatus(
+      error.message || 'Something went wrong. Please try again.',
+      true,
+      error.showApiLink === true,
+    );
     retryButton.hidden = false;
     console.error('Load failed:', error);
   }

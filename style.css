@@ -105,7 +105,15 @@ a { color: var(--accent); }
   border-radius: var(--radius);
 }
 
-.status--error {
+.status__hint {
+  margin: 10px 0 0;
+  font-size: 0.85rem;
+  color: var(--text-muted);
+}
+
+/* Matches the specificity of .status:not(:empty) above, which would otherwise
+   win and leave error messages looking like ordinary status text. */
+.status--error:not(:empty) {
   color: var(--danger);
   border-color: var(--danger);
 }
