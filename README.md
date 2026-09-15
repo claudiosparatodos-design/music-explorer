@@ -32,10 +32,12 @@ You need the three files on your own machine. Pick whichever route is easiest:
 1. Open the repository: <https://github.com/claudiosparatodos-design/music-explorer>
 2. Switch to the branch `claude/clever-hopper-oociku` using the branch dropdown (top-left, it says `main` by default).
 3. Click the green **Code** button → **Download ZIP**.
-4. Unzip the downloaded file.
-5. Open the unzipped folder and **double-click `index.html`**.
+4. **Extract the ZIP to a real folder** — right-click it → *Extract All* on Windows, double-click it on macOS.
+5. Open the **extracted folder** and double-click `index.html`.
 
 It opens in your default browser and immediately starts loading. That's the whole process — there is nothing to install and no server to start.
+
+> ⚠️ **Step 4 is not optional.** Double-clicking `index.html` while still browsing *inside* the ZIP hands the browser that one file on its own: Windows copies it alone to a temp folder, leaving `style.css` and `script.js` behind in the archive. The page then renders as bare unstyled text with no data. The page detects this and says so, but the fix is always the same — extract first, then open.
 
 ### Option B — Clone it
 
@@ -110,6 +112,7 @@ The goal is that nothing leaves the user staring at a blank page, and the page i
 | Broken artwork URL | The `<img>` hides itself on `error` instead of showing a broken-image icon |
 | Malformed individual songs | Missing `collectionName`, `trackNumber`, `trackTimeMillis` or `releaseDate` are each handled with fallbacks; one bad record never discards the rest |
 | A statistic that cannot be computed | Its card is omitted entirely rather than rendered blank or as `NaN` |
+| `style.css` or `script.js` missing | An inline guard at the bottom of `index.html` detects it and explains the cause — almost always `index.html` opened from inside the ZIP — instead of leaving a bare unstyled page |
 
 Two further details:
 

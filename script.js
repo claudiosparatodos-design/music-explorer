@@ -8,6 +8,9 @@
 
 'use strict';
 
+// Lets the guard at the bottom of index.html confirm this file actually ran.
+window.MUSIC_EXPLORER_LOADED = true;
+
 /* ------------------------------------------------------------------ */
 /* Config                                                              */
 /* ------------------------------------------------------------------ */
