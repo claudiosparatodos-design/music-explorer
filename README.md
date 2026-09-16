@@ -44,7 +44,7 @@ You need the three files on your own machine. Pick whichever route is easiest:
 4. **Extract the ZIP to a real folder** — right-click it → *Extract All* on Windows, double-click it on macOS.
 5. Open the **extracted folder** and double-click `index.html`.
 
-It opens in your default browser and immediately starts loading. That's the whole process — there is nothing to install and no server to start.
+It opens in your default browser on the search box. That's the whole process — there is nothing to install and no server to start.
 
 > ⚠️ **Step 4 is not optional.** Double-clicking `index.html` while still browsing *inside* the ZIP hands the browser that one file on its own: Windows copies it alone to a temp folder, leaving `style.css` and `script.js` behind in the archive. The page then renders as bare unstyled text with no data. The page detects this and says so, but the fix is always the same — extract first, then open.
 
@@ -93,7 +93,7 @@ Chosen because it fits the constraints of a ~4-hour exercise:
 
 ### Two ways in
 
-`fetchSongs` tries two routes, in order:
+Every call to the API goes through one function, `requestApi`, which tries two routes in order:
 
 1. **A plain `fetch`.** The normal path, used whenever it works.
 2. **JSONP**, only if the first fails at the network level. The API accepts a `callback` parameter and wraps its JSON in a call to that function; loading it through a `<script>` tag sidesteps CORS entirely, since script tags were never subject to it.
