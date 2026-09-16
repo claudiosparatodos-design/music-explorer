@@ -39,19 +39,18 @@ You need the three files on your own machine. Pick whichever route is easiest:
 ### Option A — Download the ZIP (no tools required)
 
 1. Open the repository: <https://github.com/claudiosparatodos-design/music-explorer>
-2. Switch to the branch `claude/clever-hopper-oociku` using the branch dropdown (top-left, it says `main` by default).
-3. Click the green **Code** button → **Download ZIP**.
-4. **Extract the ZIP to a real folder** — right-click it → *Extract All* on Windows, double-click it on macOS.
-5. Open the **extracted folder** and double-click `index.html`.
+2. Click the green **Code** button → **Download ZIP**.
+3. **Extract the ZIP to a real folder** — right-click it → *Extract All* on Windows, double-click it on macOS.
+4. Open the **extracted folder** and double-click `index.html`.
 
 It opens in your default browser on the search box. That's the whole process — there is nothing to install and no server to start.
 
-> ⚠️ **Step 4 is not optional.** Double-clicking `index.html` while still browsing *inside* the ZIP hands the browser that one file on its own: Windows copies it alone to a temp folder, leaving `style.css` and `script.js` behind in the archive. The page then renders as bare unstyled text with no data. The page detects this and says so, but the fix is always the same — extract first, then open.
+> ⚠️ **Step 3 is not optional.** Double-clicking `index.html` while still browsing *inside* the ZIP hands the browser that one file on its own: Windows copies it alone to a temp folder, leaving `style.css` and `script.js` behind in the archive. The page then renders as bare unstyled text with no data. The page detects this and says so, but the fix is always the same — extract first, then open.
 
 ### Option B — Clone it
 
 ```bash
-git clone -b claude/clever-hopper-oociku https://github.com/claudiosparatodos-design/music-explorer.git
+git clone https://github.com/claudiosparatodos-design/music-explorer.git
 cd music-explorer
 open index.html      # macOS
 # xdg-open index.html  (Linux)   |   start index.html  (Windows)
