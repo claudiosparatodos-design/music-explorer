@@ -10,13 +10,14 @@ The page has one job and starts doing it the moment it opens:
 
 1. **Fetch** — requests Mac Miller's songs from the iTunes Search API.
 2. **Transform** — reshapes the flat song list two ways: grouped into albums (tracks ordered, durations computed), and reduced into derived statistics.
-3. **Display** — renders four headline numbers, nine fact cards, a songs-per-year bar chart, and the album cards behind it all.
+3. **Display** — renders four headline numbers, a cover-flow timeline, nine fact cards, a songs-per-year bar chart, and the album cards behind it all.
 
 What you get:
 
 | Section | Content |
 | --- | --- |
 | Headline numbers | Songs catalogued, albums & releases, total runtime ("7h 39m to play it all"), years covered |
+| Timeline | A cover-flow carousel of every dated release, scrubbed with a slider; the selected album's name and release date animate in letter by letter |
 | Curious facts | Longest and shortest track, average song length, share marked explicit, busiest year, most-used word in song titles, tracks with a guest, appearances on other artists' records, longest release |
 | Chart | Songs per release year, with years that had no releases left visibly empty |
 | Albums | One card per release — cover, year, genre, track list with durations, total and average length |
@@ -111,6 +112,18 @@ Two passes over the same flat list, in `script.js`.
 - **Guest counts** — two distinct figures, kept from double-counting each other: *tracks with a guest* are his own releases whose title credits someone with "feat."; *appearances for others* are tracks returned under a different `artistName`.
 - **Longest release** — the album with the largest summed runtime.
 
+### About the timeline
+
+The carousel is plain CSS 3D — no library. Each cover gets a `transform` computed from its **fractional** distance to the scrub position, which is what makes dragging continuous rather than stepping from cover to cover: at position 4.5 the two neighbouring covers sit symmetrically at 22.5° each. Rotation and scale ramp over the first slot and then hold, so the whole side stack shares one angle; spacing is wide for the first neighbour and tight after it, which produces the receding stack.
+
+Three details are worth calling out:
+
+- **The slider is a real `<input type="range">`.** It comes with dragging, keyboard support and screen-reader semantics already correct. Its arrow keys are overridden to move a whole album instead of the 0.01 step that makes dragging smooth, and `aria-valuetext` is updated so assistive tech announces the album rather than a number.
+- **Transitions are off mid-drag.** The pointer already supplies every frame; easing on top of it reads as lag. The transition is switched back on to glide onto a cover when you let go, click a cover, or use the keyboard.
+- **The caption swaps two different ways.** Mid-drag it changes instantly so it tracks the covers. On landing it plays the full animation: the old caption lifts and blurs away, then the new one arrives letter by letter, each character 14 ms behind the last. Doing the animated version mid-drag meant each new index cancelled the previous fade, leaving the caption invisible until the hand stopped.
+
+All of it is skipped under `prefers-reduced-motion`, where the carousel still works — it just stops animating.
+
 ### About the chart
 
 One series, so there is no legend — the heading names it, and a legend box would be noise. Only the peak bar carries a direct label; every other value is available on hover and in a visually hidden `<table>` that duplicates the data for screen readers. Bars are anchored to the baseline with rounded tops and a 2px surface gap, and a year with no releases draws no mark at all rather than a minimum-height nub that would read as "a little". The single bar colour is taken from a validated palette and passes contrast against both the light and dark surfaces.
@@ -145,6 +158,7 @@ Two further details:
 - **No caching.** Every page load hits the network. A `sessionStorage` cache keyed by artist would make a reload instant; iTunes also rate-limits at roughly 20 calls/minute, which a cache would help stay under.
 - **Single fixed artist.** `ARTIST` is a constant, so comparing two artists side by side means editing the file. Putting the search box back and keeping several catalogues in memory would make it a comparison tool — a natural next step, and the version this one grew out of is in the git history.
 - **No automated tests.** `formatDuration`, `groupSongsByAlbum`, `findMostUsedWord` and `computeStats` are pure functions and the obvious first unit-test targets — rounding, missing fields, albums sharing a title, empty input, the guest-count double-count this version fixes. I verified those manually, plus every error path in-browser, but in a real project they would be Vitest cases in CI. The code is plain `<script>` tags with no module system, which is what made tests quick to skip; adding them would mean moving to ES modules first.
+- **Covers deep in the stack can't be clicked.** They are packed tightly enough that a nearer cover sits over their centre, so only the front cover and its immediate neighbours respond. That is how the original Cover Flow behaved too — you can click what you can see — and the slider reaches every release regardless, so I left it. Spreading the stack far enough to make every cover a target would lose the look entirely.
 - **Accessibility is decent, not audited.** Live region for status, a real table behind the chart, visible focus rings, `role="img"` with a summary label on the plot. Not done: a full keyboard pass over the results, or reduced-motion handling.
 - **The word-frequency stat is naive.** It counts word forms, not meanings — "good" and "goods" are separate, and it has no stemming. A proper version would lemmatise, but a stop-word list gets most of the value for a fraction of the effort.
 - **No framework, deliberately.** At this size a build step and a dependency tree would cost more than they return; three static files that open from disk are easy to review and cannot rot. Past a few more views, state would start to want a framework.

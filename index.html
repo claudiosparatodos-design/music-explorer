@@ -26,6 +26,39 @@
       <!-- Headline numbers: the four figures that frame everything below -->
       <section class="hero" id="hero" aria-label="Headline numbers"></section>
 
+      <!-- Cover-flow timeline: covers laid out in 3D, scrubbed with the slider -->
+      <section class="section" id="timeline-section">
+        <h2 class="section__title">Timeline</h2>
+        <p class="section__note">Drag the dot to travel through the releases, oldest to newest.</p>
+
+        <div class="flow" id="flow">
+          <div class="flow__stage" id="flow-stage"></div>
+        </div>
+
+        <!-- Caption is replaced as the selected cover changes, letter by letter -->
+        <div class="flow__caption" id="flow-caption">
+          <h3 class="flow__title" id="flow-title"></h3>
+          <p class="flow__date" id="flow-date"></p>
+        </div>
+
+        <div class="flow__scrubber">
+          <input
+            class="flow__slider"
+            id="flow-slider"
+            type="range"
+            min="0"
+            max="0"
+            step="0.01"
+            value="0"
+            aria-label="Release timeline"
+          />
+          <div class="flow__ends">
+            <span id="flow-start"></span>
+            <span id="flow-end"></span>
+          </div>
+        </div>
+      </section>
+
       <section class="section">
         <h2 class="section__title">Curious facts</h2>
         <p class="section__note">Everything here is computed from the songs listed below — not from chart or streaming data.</p>

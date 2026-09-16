@@ -305,6 +305,203 @@ a { color: var(--accent); }
   max-width: 100%;
 }
 
+
+/* ---------- Cover-flow timeline ---------- */
+.flow {
+  /* The vanishing point that turns the side covers into a receding stack */
+  perspective: 1100px;
+  perspective-origin: 50% 45%;
+  overflow: hidden;
+  padding: 8px 0 4px;
+}
+
+.flow__stage {
+  position: relative;
+  transform-style: preserve-3d;
+  /* Extra room below: perspective makes the front cover render taller than its
+     CSS size, and it would otherwise be clipped by the overflow above. */
+  height: calc(var(--cover) * 1.16);
+  --cover: clamp(130px, 22vw, 210px);
+  /* The stage's own plane sits at z=0 while the side covers are pushed back, so
+     in 3D it floats in front of them and would swallow their clicks. It has no
+     interactive role; the covers re-enable pointer events for themselves. */
+  pointer-events: none;
+}
+
+/* Only while gliding to a cover; during a drag the pointer sets every frame
+   and easing on top of it would read as lag. */
+.flow__stage.is-gliding .flow__cover {
+  transition:
+    transform 520ms cubic-bezier(0.32, 0.72, 0, 1),
+    opacity 320ms ease;
+}
+
+.flow__cover {
+  position: absolute;
+  top: 0;
+  left: 50%;
+  width: var(--cover);
+  height: var(--cover);
+  margin: 0 0 0 calc(var(--cover) / -2);
+  cursor: pointer;
+  /* Keeps the turned covers from looking flat */
+  transform-style: preserve-3d;
+  will-change: transform, opacity;
+}
+
+.flow__art {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  border-radius: 4px;
+  background: var(--surface-hover);
+  box-shadow: 0 18px 34px rgba(0, 0, 0, 0.28);
+  -webkit-user-drag: none;
+  user-select: none;
+}
+
+.flow__art--empty {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 10px;
+  font-size: 0.8rem;
+  text-align: center;
+  color: var(--text-muted);
+  box-shadow: none;
+  border: 1px solid var(--border);
+}
+
+/* ---------- Caption ---------- */
+.flow__caption {
+  margin: 22px auto 0;
+  min-height: 74px;
+  text-align: center;
+  transition: opacity 150ms ease, transform 150ms ease, filter 150ms ease;
+}
+
+/* The outgoing state: the whole caption lifts and blurs away as one block */
+.flow__caption.is-leaving {
+  opacity: 0;
+  transform: translateY(-6px);
+  filter: blur(3px);
+}
+
+.flow__title {
+  margin: 0;
+  font-size: clamp(1.15rem, 2.6vw, 1.6rem);
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  /* Letters are inline-block so each can be transformed on its own */
+  display: inline-block;
+}
+
+.flow__letter {
+  display: inline-block;
+  white-space: pre;
+  animation: flow-letter-in 460ms cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+/* Rises into place as the blur clears — the incoming half of the swap */
+@keyframes flow-letter-in {
+  from { opacity: 0; transform: translateY(0.5em); filter: blur(5px); }
+  to   { opacity: 1; transform: none; filter: blur(0); }
+}
+
+.flow__date {
+  margin: 6px 0 0;
+  font-size: 0.88rem;
+  color: var(--text-muted);
+  animation: flow-date-in 520ms 120ms cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+@keyframes flow-date-in {
+  from { opacity: 0; transform: translateY(6px); }
+  to   { opacity: 1; transform: none; }
+}
+
+/* ---------- Scrubber ---------- */
+.flow__scrubber {
+  max-width: 460px;
+  margin: 18px auto 0;
+}
+
+.flow__slider {
+  -webkit-appearance: none;
+  appearance: none;
+  display: block;
+  width: 100%;
+  height: 22px;
+  background: none;
+  cursor: grab;
+}
+
+.flow__slider:active { cursor: grabbing; }
+
+/* The line. Two vendor blocks, because a shared selector is dropped by both. */
+.flow__slider::-webkit-slider-runnable-track {
+  height: 3px;
+  border-radius: 3px;
+  background: var(--border);
+}
+
+.flow__slider::-moz-range-track {
+  height: 3px;
+  border-radius: 3px;
+  background: var(--border);
+}
+
+/* The dot */
+.flow__slider::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 16px;
+  height: 16px;
+  margin-top: -6.5px; /* centres the dot on a 3px track */
+  border-radius: 50%;
+  background: var(--accent);
+  border: 2px solid var(--surface);
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.3);
+  transition: transform 150ms ease;
+}
+
+.flow__slider::-moz-range-thumb {
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: var(--accent);
+  border: 2px solid var(--surface);
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.3);
+  transition: transform 150ms ease;
+}
+
+.flow__slider:active::-webkit-slider-thumb { transform: scale(1.2); }
+.flow__slider:active::-moz-range-thumb { transform: scale(1.2); }
+
+.flow__slider:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 4px;
+  border-radius: 4px;
+}
+
+.flow__ends {
+  display: flex;
+  justify-content: space-between;
+  margin-top: 2px;
+  font-size: 0.75rem;
+  color: var(--text-muted);
+  font-variant-numeric: tabular-nums;
+}
+
+/* Motion is decoration here; the carousel still works entirely without it. */
+@media (prefers-reduced-motion: reduce) {
+  .flow__stage.is-gliding .flow__cover { transition: none; }
+  .flow__letter,
+  .flow__date { animation: none; }
+  .flow__caption { transition: none; }
+}
+
 /* ---------- Album grid ---------- */
 .albums {
   display: grid;

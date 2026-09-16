@@ -49,10 +49,35 @@ const albumsEl = document.getElementById('albums');
 const albumsSummaryEl = document.getElementById('albums-summary');
 const showMoreButton = document.getElementById('show-more-button');
 const retryButton = document.getElementById('retry-button');
+const timelineSectionEl = document.getElementById('timeline-section');
+const flowStageEl = document.getElementById('flow-stage');
+const flowCaptionEl = document.getElementById('flow-caption');
+const flowTitleEl = document.getElementById('flow-title');
+const flowDateEl = document.getElementById('flow-date');
+const flowSliderEl = document.getElementById('flow-slider');
+const flowStartEl = document.getElementById('flow-start');
+const flowEndEl = document.getElementById('flow-end');
 
 // Current result set, kept so the "show all" toggle can re-render without refetching.
 let currentAlbums = [];
 let showingAllAlbums = false;
+
+/* Cover-flow state -------------------------------------------------- */
+
+const FLOW_MAX_ANGLE = 45;    // degrees a side cover is turned toward the centre
+const FLOW_DEPTH = 150;       // px a side cover is pushed back
+const FLOW_SCALE_DROP = 0.26; // how much smaller a side cover gets
+const FLOW_VISIBLE = 4;       // covers shown either side before fading out
+
+let flowAlbums = [];      // oldest first — a timeline runs left to right
+let flowCovers = [];      // the DOM nodes, same order
+let flowPosition = 0;     // fractional: 2.4 means "between covers 2 and 3"
+let flowCaptioned = -1;   // index the caption currently describes
+let flowCoverWidth = 0;   // measured, so offsets scale with the CSS size
+let captionToken = 0;     // guards against overlapping caption swaps
+
+// Respect the OS "reduce motion" setting: no stagger, no long transitions.
+const reduceMotion = window.matchMedia('(prefers-reduced-motion: reduce)');
 
 /* ------------------------------------------------------------------ */
 /* 1. FETCH                                                            */
@@ -684,6 +709,222 @@ function renderChart(stats) {
   chartTableEl.replaceChildren(caption, head, body);
 }
 
+/* ---------- Cover-flow timeline ---------- */
+
+const MONTH_NAMES = [
+  'January', 'February', 'March', 'April', 'May', 'June',
+  'July', 'August', 'September', 'October', 'November', 'December',
+];
+
+/**
+ * Format an ISO release date as "3 August 2018".
+ * Parsed by slicing rather than with `new Date`, which would shift the day
+ * across time zones and could show the wrong date.
+ * @param {string} iso
+ * @returns {string}
+ */
+function formatReleaseDate(iso) {
+  if (!iso || iso.length < 10) return '';
+  const year = iso.slice(0, 4);
+  const month = Number(iso.slice(5, 7));
+  const day = Number(iso.slice(8, 10));
+  if (!Number.isFinite(month) || !MONTH_NAMES[month - 1]) return year;
+  return `${day} ${MONTH_NAMES[month - 1]} ${year}`;
+}
+
+/**
+ * The 3D transform for a cover sitting `distance` slots from the centre.
+ * Fractional distances are expected — that is what makes scrubbing continuous
+ * rather than stepping from cover to cover.
+ * @param {number} distance signed: negative is left of centre
+ * @returns {string} a CSS transform
+ */
+function coverTransform(distance) {
+  const magnitude = Math.abs(distance);
+  const direction = Math.sign(distance);
+  // The first neighbour sits well clear of the centre cover; the ones behind it
+  // are packed much tighter, which is what gives cover flow its receding stack.
+  const nearGap = flowCoverWidth * 0.78;
+  const farGap = flowCoverWidth * 0.17;
+  const x = direction * (magnitude <= 1
+    ? magnitude * nearGap
+    : nearGap + (magnitude - 1) * farGap);
+
+  // Rotation and scale only ramp over the first slot, then hold — so the whole
+  // side stack shares one angle, exactly like the original.
+  const ramp = Math.min(magnitude, 1);
+  const rotation = -direction * ramp * FLOW_MAX_ANGLE;
+  const depth = -ramp * FLOW_DEPTH - Math.max(0, magnitude - 1) * 22;
+  const scale = 1 - ramp * FLOW_SCALE_DROP;
+
+  return `translateX(${x}px) translateZ(${depth}px) rotateY(${rotation}deg) scale(${scale})`;
+}
+
+/**
+ * Position every cover for the current scrub position.
+ */
+function applyFlowTransforms() {
+  flowCovers.forEach((cover, index) => {
+    const distance = index - flowPosition;
+    const magnitude = Math.abs(distance);
+
+    cover.style.transform = coverTransform(distance);
+    // Nearer covers must paint on top of the ones stacked behind them.
+    cover.style.zIndex = String(Math.round(100 - magnitude * 10));
+
+    // Fade the far ends out instead of cutting them off abruptly.
+    let opacity = 1;
+    if (magnitude > FLOW_VISIBLE + 0.5) opacity = 0;
+    else if (magnitude > FLOW_VISIBLE - 0.5) opacity = FLOW_VISIBLE + 0.5 - magnitude;
+    cover.style.opacity = String(opacity);
+    cover.style.pointerEvents = opacity < 0.1 ? 'none' : 'auto';
+  });
+}
+
+/**
+ * Write the caption for an album, one letter at a time.
+ * @param {object} album
+ */
+function fillCaption(album) {
+  flowTitleEl.replaceChildren();
+
+  // Each character is its own span so it can carry its own delay. textContent
+  // keeps album names from being read as markup, same rule as everywhere else.
+  [...album.name].forEach((character, index) => {
+    const span = el('span', 'flow__letter', character === ' ' ? ' ' : character);
+    if (!reduceMotion.matches) span.style.animationDelay = `${index * 14}ms`;
+    flowTitleEl.append(span);
+  });
+
+  flowDateEl.textContent = formatReleaseDate(album.releaseDate);
+}
+
+/**
+ * Swap the caption to a new album.
+ *
+ * Two modes, because one does not fit both gestures. Mid-drag the swap is
+ * instant: the animated version fades out first, and during a fast scrub each
+ * new index cancels the previous fade, so the caption would sit invisible until
+ * the hand stopped. On landing it plays in full — fade the old one out, then
+ * bring the new one in letter by letter.
+ *
+ * @param {number} index
+ * @param {object} [options]
+ * @param {boolean} [options.animate] false for an instant swap
+ * @param {boolean} [options.force] replay even if the album has not changed
+ */
+function updateCaption(index, { animate = true, force = false } = {}) {
+  if (index === flowCaptioned && !force) return;
+  const album = flowAlbums[index];
+  if (!album) return;
+
+  flowCaptioned = index;
+  // Keep assistive tech in step with what the slider is pointing at.
+  flowSliderEl.setAttribute('aria-valuetext', `${album.name}, ${album.year}`);
+
+  if (!animate || reduceMotion.matches) {
+    // Abandon any fade still in flight, so it cannot overwrite this.
+    captionToken += 1;
+    flowCaptionEl.classList.remove('is-leaving');
+    fillCaption(album);
+    return;
+  }
+
+  const token = ++captionToken;
+  flowCaptionEl.classList.add('is-leaving');
+
+  setTimeout(() => {
+    // A newer swap started while this one was fading; it owns the caption now.
+    if (token !== captionToken) return;
+    fillCaption(album);
+    flowCaptionEl.classList.remove('is-leaving');
+  }, 150);
+}
+
+/**
+ * Move the carousel.
+ * @param {number} position fractional index
+ * @param {boolean} [glide] true to animate there, false while dragging
+ */
+function setFlowPosition(position, glide = false) {
+  const last = flowAlbums.length - 1;
+  flowPosition = Math.max(0, Math.min(last, position));
+
+  // Transitions are switched off mid-drag: the pointer is already supplying
+  // every frame, and easing on top of it would feel like lag.
+  flowStageEl.classList.toggle('is-gliding', glide && !reduceMotion.matches);
+
+  applyFlowTransforms();
+  // Gliding means the carousel is settling on a cover, which is the moment the
+  // caption gets its full entrance; dragging just keeps it in sync.
+  updateCaption(Math.round(flowPosition), { animate: glide, force: glide });
+}
+
+/**
+ * Jump to a whole album — used by cover clicks and the arrow keys.
+ * @param {number} index
+ */
+function goToAlbum(index) {
+  const last = flowAlbums.length - 1;
+  const target = Math.max(0, Math.min(last, Math.round(index)));
+  flowSliderEl.value = String(target);
+  setFlowPosition(target, true);
+}
+
+/**
+ * Build the cover-flow timeline.
+ * @param {Array<object>} albums newest-first, as produced by groupSongsByAlbum
+ */
+function renderTimeline(albums) {
+  // A timeline needs dates and runs forwards, so drop the undated releases and
+  // reverse the newest-first order the rest of the page uses.
+  flowAlbums = albums.filter((album) => album.releaseDate).slice().reverse();
+
+  if (flowAlbums.length === 0) {
+    timelineSectionEl.hidden = true;
+    return;
+  }
+  timelineSectionEl.hidden = false;
+
+  const fragment = document.createDocumentFragment();
+  flowCovers = flowAlbums.map((album, index) => {
+    const cover = el('figure', 'flow__cover');
+
+    if (album.artwork) {
+      const art = document.createElement('img');
+      art.className = 'flow__art';
+      art.src = album.artwork;
+      art.alt = `Cover of ${album.name}`;
+      art.loading = 'lazy';
+      art.draggable = false;
+      art.addEventListener('error', () => { art.style.visibility = 'hidden'; });
+      cover.append(art);
+    } else {
+      // No artwork: a plain tile with the album name beats a broken image.
+      cover.append(el('div', 'flow__art flow__art--empty', album.name));
+    }
+
+    // Clicking a cover is the shortcut for dragging the slider to it.
+    cover.addEventListener('click', () => goToAlbum(index));
+    fragment.append(cover);
+    return cover;
+  });
+
+  flowStageEl.replaceChildren(fragment);
+
+  flowSliderEl.max = String(flowAlbums.length - 1);
+  flowSliderEl.value = '0';
+  flowStartEl.textContent = flowAlbums[0].year;
+  flowEndEl.textContent = flowAlbums[flowAlbums.length - 1].year;
+
+  // Offsets are multiples of the rendered cover width, so measure it rather
+  // than hard-coding a number the CSS could change underneath us.
+  flowCoverWidth = flowCovers[0].offsetWidth || 180;
+
+  flowCaptioned = -1;
+  setFlowPosition(0);
+}
+
 /**
  * Build the DOM for one album card.
  * @param {object} album
@@ -798,6 +1039,7 @@ async function load() {
     showingAllAlbums = false;
 
     renderHero(stats);
+    renderTimeline(albums);
     renderFacts(stats);
     renderChart(stats);
     paintAlbums();
@@ -820,6 +1062,39 @@ async function load() {
 showMoreButton.addEventListener('click', () => {
   showingAllAlbums = !showingAllAlbums;
   paintAlbums();
+});
+
+// Dragging: follow the pointer exactly, with no easing in the way.
+flowSliderEl.addEventListener('input', () => {
+  setFlowPosition(Number(flowSliderEl.value), false);
+});
+
+// Letting go: settle onto the nearest cover instead of stopping half-turned.
+flowSliderEl.addEventListener('change', () => {
+  goToAlbum(Number(flowSliderEl.value));
+});
+
+// The range input's own arrow keys would nudge by 0.01 — a step the eye cannot
+// see. Override them to move a whole album at a time.
+flowSliderEl.addEventListener('keydown', (event) => {
+  const steps = { ArrowLeft: -1, ArrowDown: -1, ArrowRight: 1, ArrowUp: 1 };
+  if (event.key in steps) {
+    event.preventDefault();
+    goToAlbum(Math.round(flowPosition) + steps[event.key]);
+  } else if (event.key === 'Home') {
+    event.preventDefault();
+    goToAlbum(0);
+  } else if (event.key === 'End') {
+    event.preventDefault();
+    goToAlbum(flowAlbums.length - 1);
+  }
+});
+
+// The cover size is set in CSS with clamp(), so it changes with the viewport.
+window.addEventListener('resize', () => {
+  if (flowCovers.length === 0) return;
+  flowCoverWidth = flowCovers[0].offsetWidth || flowCoverWidth;
+  applyFlowTransforms();
 });
 
 retryButton.addEventListener('click', load);
