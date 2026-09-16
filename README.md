@@ -2,6 +2,8 @@
 
 A small vanilla-JavaScript page that searches any artist on the public iTunes Search API, pulls their catalogue, derives a set of statistics from it, and presents them as headline numbers, a cover-flow timeline, fact cards, a per-year bar chart and album cards.
 
+**[▶ Live demo](https://claudiosparatodos-design.github.io/music-explorer/)**
+
 No build step, no dependencies, no server — three static files you open in a browser.
 
 ## What this does
