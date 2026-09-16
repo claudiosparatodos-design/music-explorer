@@ -1,9 +1,10 @@
 /**
- * Music Explorer — Mac Miller
- * ---------------------------
- * Flow: FETCH the artist's songs from the iTunes Search API -> TRANSFORM the
- * flat song list into albums and a set of derived statistics -> DISPLAY those
- * as headline numbers, fact cards, a per-year bar chart and album cards.
+ * Music Explorer
+ * --------------
+ * Search for an artist, then: FETCH their songs from the iTunes Search API ->
+ * TRANSFORM the flat song list into albums and a set of derived statistics ->
+ * DISPLAY those as headline numbers, a cover-flow timeline, fact cards, a
+ * per-year bar chart and album cards.
  */
 
 'use strict';
@@ -15,17 +16,23 @@ window.MUSIC_EXPLORER_LOADED = true;
 /* Config                                                              */
 /* ------------------------------------------------------------------ */
 
-const API_URL = 'https://itunes.apple.com/search';
+const SEARCH_URL = 'https://itunes.apple.com/search';
+const LOOKUP_URL = 'https://itunes.apple.com/lookup';
 
-// Fixed artist: the whole page is about this one catalogue.
-const ARTIST = 'Mac Miller';
-
-// One artist is already a small, bounded dataset, so we take the API's full
+// One artist at a time is a small, bounded dataset, so we take the API's full
 // slice (200 is its maximum) — the statistics are only as good as the sample.
 const RESULT_LIMIT = 200;
 
 // Albums rendered before the "show all" button appears.
 const ALBUM_DISPLAY_LIMIT = 6;
+
+// Autocomplete tuning.
+const SUGGEST_LIMIT = 8;      // rows in the dropdown
+const SUGGEST_MIN_CHARS = 2;  // below this, one letter matches half the store
+const SUGGEST_DEBOUNCE = 250; // ms of quiet typing before a request goes out
+
+// Offered on the empty first-run screen so the page is usable without ideas.
+const EXAMPLE_ARTISTS = ['Mac Miller', 'Radiohead', 'Shakira', 'Kendrick Lamar'];
 
 // Words ignored when looking for the most-used word in song titles.
 const STOP_WORDS = new Set([
@@ -57,10 +64,32 @@ const flowDateEl = document.getElementById('flow-date');
 const flowSliderEl = document.getElementById('flow-slider');
 const flowStartEl = document.getElementById('flow-start');
 const flowEndEl = document.getElementById('flow-end');
+const searchFormEl = document.getElementById('search-form');
+const searchInputEl = document.getElementById('search-input');
+const suggestionsEl = document.getElementById('suggestions');
+const emptyStateEl = document.getElementById('empty-state');
+const emptyExamplesEl = document.getElementById('empty-examples');
+const artistNameEl = document.getElementById('artist-name');
+const artistMetaEl = document.getElementById('artist-meta');
 
 // Current result set, kept so the "show all" toggle can re-render without refetching.
 let currentAlbums = [];
 let showingAllAlbums = false;
+let currentArtist = null;   // the {artistId, artistName} currently displayed
+
+/* Autocomplete state ------------------------------------------------ */
+
+let suggestItems = [];      // the artists currently listed
+let suggestActive = -1;     // highlighted row, -1 for none
+let suggestTimer = null;    // debounce handle
+let suggestToken = 0;       // ignores responses that arrive out of order
+let loadToken = 0;          // same idea for the main load
+
+// Two small caches. Re-typing a query or revisiting an artist then costs
+// nothing, which matters because iTunes rate-limits at around 20 calls/minute
+// and an autocomplete can burn through that quickly.
+const suggestCache = new Map();
+const artistSongsCache = new Map();
 
 /* Cover-flow state -------------------------------------------------- */
 
@@ -84,22 +113,6 @@ const reduceMotion = window.matchMedia('(prefers-reduced-motion: reduce)');
 /* ------------------------------------------------------------------ */
 
 /**
- * Build the query. URLSearchParams encodes the term safely (spaces, accents,
- * &, etc.). attribute=artistTerm matches the artist field rather than any
- * text, so we get songs *by* the artist instead of every track mentioning him.
- * @returns {URLSearchParams}
- */
-function buildParams() {
-  return new URLSearchParams({
-    term: ARTIST,
-    attribute: 'artistTerm',
-    media: 'music',
-    entity: 'song',
-    limit: String(RESULT_LIMIT),
-  });
-}
-
-/**
  * Pull the results array out of a parsed API payload, or throw if the payload
  * is an error rather than a result set.
  * @param {object} data
@@ -115,13 +128,14 @@ function readResults(data) {
 
 /**
  * Normal path: a plain CORS request.
+ * @param {string} url
  * @param {URLSearchParams} params
  * @returns {Promise<Array<object>>}
  */
-async function fetchViaCors(params) {
+async function fetchViaCors(url, params) {
   let response;
   try {
-    response = await fetch(`${API_URL}?${params}`);
+    response = await fetch(`${url}?${params}`);
   } catch (cause) {
     // fetch() rejects for offline, DNS, timeout, a blocked request *and* a
     // failed CORS preflight — the browser deliberately hides which. Flag it so
@@ -162,10 +176,11 @@ async function fetchViaCors(params) {
  * acceptable for a first-party Apple endpoint over HTTPS; it would not be for
  * an untrusted API.
  *
+ * @param {string} url
  * @param {URLSearchParams} params
  * @returns {Promise<Array<object>>}
  */
-function fetchViaJsonp(params) {
+function fetchViaJsonp(url, params) {
   return new Promise((resolve, reject) => {
     // Unique name so overlapping calls cannot clobber each other.
     const callbackName = `itunesJsonp_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
@@ -196,28 +211,30 @@ function fetchViaJsonp(params) {
       reject(new Error('The fallback request failed.'));
     };
 
-    script.src = `${API_URL}?${params}&callback=${callbackName}`;
+    script.src = `${url}?${params}&callback=${callbackName}`;
     document.head.append(script);
   });
 }
 
 /**
- * Fetch the artist's songs, trying the direct request first and falling back
- * to JSONP only when the direct one fails at the network/CORS level.
- * Throws an Error carrying a user-friendly message when both routes fail.
- * @returns {Promise<Array<object>>} raw iTunes song objects
+ * Every call to the API goes through here: try the direct request, fall back to
+ * JSONP only when it failed at the network/CORS level.
+ * @param {string} url
+ * @param {object} query plain object of query parameters
+ * @returns {Promise<Array<object>>}
  */
-async function fetchSongs() {
-  const params = buildParams();
+async function requestApi(url, query) {
+  // URLSearchParams encodes values safely (spaces, accents, &, etc.).
+  const params = new URLSearchParams(query);
 
   try {
-    return await fetchViaCors(params);
+    return await fetchViaCors(url, params);
   } catch (error) {
     // An HTTP status or a bad payload means the network is fine — surface it.
     if (!error.isNetworkError) throw error;
 
     try {
-      return await fetchViaJsonp(params);
+      return await fetchViaJsonp(url, params);
     } catch {
       // Both routes are down. At this point it is the network, not the page.
       const failure = new Error(
@@ -228,6 +245,64 @@ async function fetchSongs() {
       throw failure;
     }
   }
+}
+
+/**
+ * Find artists matching what has been typed so far.
+ * entity=musicArtist asks for artists rather than songs, which is what makes
+ * this a name lookup instead of a full catalogue search.
+ * @param {string} term
+ * @returns {Promise<Array<object>>} artist records
+ */
+async function searchArtists(term) {
+  const key = term.toLowerCase();
+  if (suggestCache.has(key)) return suggestCache.get(key);
+
+  const results = await requestApi(SEARCH_URL, {
+    term,
+    entity: 'musicArtist',
+    limit: String(SUGGEST_LIMIT),
+  });
+
+  // The API can repeat an artist across storefront entries; keep the first of each.
+  const seen = new Set();
+  const artists = results.filter((artist) => {
+    if (!artist.artistName || artist.artistId == null) return false;
+    if (seen.has(artist.artistId)) return false;
+    seen.add(artist.artistId);
+    return true;
+  });
+
+  // Keep the cache from growing without bound over a long session.
+  if (suggestCache.size > 50) suggestCache.clear();
+  suggestCache.set(key, artists);
+  return artists;
+}
+
+/**
+ * Fetch one artist's songs by id.
+ *
+ * The lookup endpoint takes the artistId the suggestion already gave us, so
+ * there is no name matching left to get wrong — no risk of a different artist
+ * with a similar name, and no tracks that merely mention them.
+ *
+ * @param {number|string} artistId
+ * @returns {Promise<Array<object>>} raw iTunes song objects
+ */
+async function fetchArtistSongs(artistId) {
+  const key = String(artistId);
+  if (artistSongsCache.has(key)) return artistSongsCache.get(key);
+
+  const results = await requestApi(LOOKUP_URL, {
+    id: key,
+    entity: 'song',
+    limit: String(RESULT_LIMIT),
+  });
+
+  // A lookup answers with the artist record first, then the tracks.
+  const songs = results.filter((item) => item.wrapperType === 'track' || item.trackName);
+  artistSongsCache.set(key, songs);
+  return songs;
 }
 
 /* ------------------------------------------------------------------ */
@@ -382,9 +457,12 @@ function findMostUsedWord(songs) {
  * Derive the statistics the page is built around.
  * @param {Array<object>} songs raw iTunes results
  * @param {Array<object>} albums output of groupSongsByAlbum
+ * @param {string} artistName who the page is about — decides which tracks count
+ *   as their own releases and which are guest appearances
  * @returns {object} stats view-model
  */
-function computeStats(songs, albums) {
+function computeStats(songs, albums, artistName) {
+  const ownName = (artistName || '').toLowerCase();
   // Only tracks with a reported length can take part in duration maths.
   const timed = songs.filter((song) => Number.isFinite(song.trackTimeMillis));
   const totalMillis = timed.reduce((sum, song) => sum + song.trackTimeMillis, 0);
@@ -426,7 +504,7 @@ function computeStats(songs, albums) {
   // Guest spots: the search matched the artist field, so a different artistName
   // means this is someone else's track that he appears on.
   const guestSpots = songs.filter(
-    (song) => (song.artistName || '').toLowerCase() !== ARTIST.toLowerCase(),
+    (song) => (song.artistName || '').toLowerCase() !== ownName,
   ).length;
 
   // Tracks where he hosts someone else, spotted by the title's "(feat. ...)".
@@ -434,7 +512,7 @@ function computeStats(songs, albums) {
   // counted twice (it already shows up as a guest spot above).
   const featuresHosted = songs.filter(
     (song) =>
-      (song.artistName || '').toLowerCase() === ARTIST.toLowerCase() &&
+      (song.artistName || '').toLowerCase() === ownName &&
       /\b(feat\.?|featuring|ft\.?)\b/i.test(song.trackName || ''),
   ).length;
 
@@ -486,7 +564,13 @@ function showStatus(message, isError = false, withApiLink = false) {
   const hint = el('p', 'status__hint');
   hint.append(document.createTextNode('Open '));
   const link = document.createElement('a');
-  link.href = `${API_URL}?${buildParams()}`;
+  // Point at whatever the user was actually after, so the test is meaningful.
+  const probeTerm = currentArtist?.artistName || searchInputEl.value.trim() || 'radiohead';
+  link.href = `${SEARCH_URL}?${new URLSearchParams({
+    term: probeTerm,
+    entity: 'musicArtist',
+    limit: '5',
+  })}`;
   link.target = '_blank';
   link.rel = 'noopener noreferrer';
   link.textContent = 'the API URL directly';
@@ -1012,31 +1096,161 @@ function paintAlbums() {
 }
 
 /* ------------------------------------------------------------------ */
+/* Autocomplete                                                        */
+/* ------------------------------------------------------------------ */
+
+/**
+ * Close the dropdown and reset its state.
+ */
+function closeSuggestions() {
+  suggestionsEl.hidden = true;
+  suggestionsEl.replaceChildren();
+  suggestItems = [];
+  suggestActive = -1;
+  searchInputEl.setAttribute('aria-expanded', 'false');
+  searchInputEl.removeAttribute('aria-activedescendant');
+}
+
+/**
+ * Mark one row as highlighted and tell assistive tech which it is.
+ * @param {number} index -1 clears the highlight
+ */
+function setSuggestActive(index) {
+  const rows = [...suggestionsEl.querySelectorAll('.suggestion')];
+  rows.forEach((row, i) => row.classList.toggle('is-active', i === index));
+  suggestActive = index;
+
+  if (index < 0 || !rows[index]) {
+    searchInputEl.removeAttribute('aria-activedescendant');
+    return;
+  }
+  searchInputEl.setAttribute('aria-activedescendant', rows[index].id);
+  // Keep the highlighted row in view when arrowing past the visible rows.
+  rows[index].scrollIntoView({ block: 'nearest' });
+}
+
+/**
+ * Draw the dropdown.
+ * @param {Array<object>} artists
+ * @param {string} term what was typed, for the empty message
+ */
+function renderSuggestions(artists, term) {
+  suggestItems = artists;
+  suggestActive = -1;
+  const list = document.createDocumentFragment();
+
+  if (artists.length === 0) {
+    // The "not found" case the brief asks for: say so in place, rather than
+    // letting the user press Enter into a dead end.
+    const empty = el('li', 'suggestion suggestion--empty', `No artists found for “${term}”.`);
+    empty.setAttribute('role', 'presentation');
+    list.append(empty);
+  } else {
+    artists.forEach((artist, index) => {
+      const row = el('li', 'suggestion');
+      row.id = `suggestion-${index}`;
+      row.setAttribute('role', 'option');
+      row.setAttribute('aria-selected', 'false');
+
+      row.append(el('span', 'suggestion__name', artist.artistName));
+      if (artist.primaryGenreName) {
+        row.append(el('span', 'suggestion__genre', artist.primaryGenreName));
+      }
+
+      // mousedown, not click: the input's blur would close the list first.
+      row.addEventListener('mousedown', (event) => {
+        event.preventDefault();
+        selectArtist(artist);
+      });
+      row.addEventListener('mouseenter', () => setSuggestActive(index));
+      list.append(row);
+    });
+  }
+
+  suggestionsEl.replaceChildren(list);
+  suggestionsEl.hidden = false;
+  searchInputEl.setAttribute('aria-expanded', 'true');
+}
+
+/**
+ * Ask for suggestions for what has been typed, debounced.
+ * @param {string} term
+ */
+function requestSuggestions(term) {
+  const token = ++suggestToken;
+
+  searchArtists(term)
+    .then((artists) => {
+      // A newer keystroke already went out; this answer is stale.
+      if (token !== suggestToken) return;
+      // The user cleared or shrank the box while we waited.
+      if (searchInputEl.value.trim().length < SUGGEST_MIN_CHARS) return;
+      renderSuggestions(artists, term);
+    })
+    .catch(() => {
+      // Suggestions are a convenience. If they fail, stay quiet and let the
+      // user submit anyway — the main search reports errors properly.
+      if (token === suggestToken) closeSuggestions();
+    });
+}
+
+/* ------------------------------------------------------------------ */
 /* Orchestration                                                       */
 /* ------------------------------------------------------------------ */
 
 /**
- * Run the whole flow: fetch -> transform -> display, handling every failure.
+ * Clear everything belonging to the previously displayed artist, so a new one
+ * never inherits stale covers, albums or carousel position.
  */
-async function load() {
-  retryButton.hidden = true;
+function resetResults() {
   contentEl.hidden = true;
-  showStatus(`Loading ${ARTIST}’s catalogue…`);
+  currentAlbums = [];
+  showingAllAlbums = false;
+  flowAlbums = [];
+  flowCovers = [];
+  flowPosition = 0;
+  flowCaptioned = -1;
+  flowStageEl.replaceChildren();
+  albumsEl.replaceChildren();
+  showMoreButton.hidden = true;
+}
+
+/**
+ * Load and display one artist.
+ * @param {object} artist an iTunes artist record
+ */
+async function loadArtist(artist) {
+  const token = ++loadToken;
+
+  currentArtist = artist;
+  closeSuggestions();
+  resetResults();
+  emptyStateEl.hidden = true;
+  retryButton.hidden = true;
+  showStatus(`Loading ${artist.artistName}’s catalogue…`);
 
   try {
-    const songs = await fetchSongs();
+    const songs = await fetchArtistSongs(artist.artistId);
+    // A newer search started while this one was in flight.
+    if (token !== loadToken) return;
 
     if (songs.length === 0) {
-      showStatus(`The iTunes API returned no songs for ${ARTIST}. Try again later.`);
+      // The artist exists in the store but has no songs we can read.
+      showStatus(`We found ${artist.artistName}, but the API returned no songs for them.`);
       retryButton.hidden = false;
       return;
     }
 
     const albums = groupSongsByAlbum(songs);
-    const stats = computeStats(songs, albums);
+    const stats = computeStats(songs, albums, artist.artistName);
 
     currentAlbums = albums;
-    showingAllAlbums = false;
+
+    artistNameEl.textContent = artist.artistName;
+    artistMetaEl.textContent = artist.primaryGenreName
+      ? `${artist.primaryGenreName} · ${stats.songCount} songs catalogued`
+      : `${stats.songCount} songs catalogued`;
+    document.title = `${artist.artistName} — Music Explorer`;
 
     renderHero(stats);
     renderTimeline(albums);
@@ -1047,6 +1261,7 @@ async function load() {
     clearStatus();
     contentEl.hidden = false;
   } catch (error) {
+    if (token !== loadToken) return;
     // Everything surfaces as a readable message; the page stays usable and the
     // retry button lets the user recover without reloading.
     showStatus(
@@ -1058,6 +1273,146 @@ async function load() {
     console.error('Load failed:', error);
   }
 }
+
+/**
+ * Pick an artist from the dropdown.
+ * @param {object} artist
+ */
+function selectArtist(artist) {
+  searchInputEl.value = artist.artistName;
+  loadArtist(artist);
+}
+
+/**
+ * Handle a submitted search — Enter, or the Search button.
+ *
+ * If a suggestion is highlighted, that wins. Otherwise we look the typed text
+ * up and take the best match, so the user never has to open the dropdown.
+ * @param {string} term
+ */
+async function submitSearch(term) {
+  if (suggestActive >= 0 && suggestItems[suggestActive]) {
+    selectArtist(suggestItems[suggestActive]);
+    return;
+  }
+
+  const trimmed = term.trim();
+  if (!trimmed) {
+    showStatus('Type an artist name to search.');
+    return;
+  }
+
+  const token = ++loadToken;
+  closeSuggestions();
+  resetResults();
+  emptyStateEl.hidden = true;
+  retryButton.hidden = true;
+  showStatus(`Searching for “${trimmed}”…`);
+
+  let artists;
+  try {
+    artists = await searchArtists(trimmed);
+  } catch (error) {
+    if (token !== loadToken) return;
+    showStatus(
+      error.message || 'Something went wrong. Please try again.',
+      true,
+      error.showApiLink === true,
+    );
+    retryButton.hidden = false;
+    return;
+  }
+
+  if (token !== loadToken) return;
+
+  if (artists.length === 0) {
+    // Nothing matched. Say so plainly and leave the page usable — this is the
+    // case that would otherwise look like a crash.
+    showStatus(`No artist found for “${trimmed}”. Check the spelling, or try another name.`);
+    emptyStateEl.hidden = false;
+    return;
+  }
+
+  loadArtist(artists[0]);
+}
+
+/**
+ * Fill the first-run screen with a few artists to click.
+ */
+function renderExamples() {
+  const fragment = document.createDocumentFragment();
+  for (const name of EXAMPLE_ARTISTS) {
+    const chip = el('button', 'chip', name);
+    chip.type = 'button';
+    chip.addEventListener('click', () => {
+      searchInputEl.value = name;
+      submitSearch(name);
+    });
+    fragment.append(chip);
+  }
+  emptyExamplesEl.replaceChildren(fragment);
+}
+
+/* ------------------------------------------------------------------ */
+/* Events                                                              */
+/* ------------------------------------------------------------------ */
+
+searchInputEl.addEventListener('input', () => {
+  const term = searchInputEl.value.trim();
+  clearTimeout(suggestTimer);
+
+  // One or two letters match half the store, and every keystroke is a request.
+  if (term.length < SUGGEST_MIN_CHARS) {
+    closeSuggestions();
+    return;
+  }
+
+  // Wait for a pause in typing before spending a request.
+  suggestTimer = setTimeout(() => requestSuggestions(term), SUGGEST_DEBOUNCE);
+});
+
+searchInputEl.addEventListener('keydown', (event) => {
+  if (event.key === 'Escape') {
+    closeSuggestions();
+    return;
+  }
+  if (suggestionsEl.hidden || suggestItems.length === 0) return;
+
+  if (event.key === 'ArrowDown') {
+    event.preventDefault();
+    setSuggestActive((suggestActive + 1) % suggestItems.length);
+  } else if (event.key === 'ArrowUp') {
+    event.preventDefault();
+    setSuggestActive((suggestActive - 1 + suggestItems.length) % suggestItems.length);
+  }
+});
+
+// Re-open the list when returning to a box that already has a query in it.
+searchInputEl.addEventListener('focus', () => {
+  const term = searchInputEl.value.trim();
+  if (term.length >= SUGGEST_MIN_CHARS && suggestItems.length > 0) {
+    suggestionsEl.hidden = false;
+    searchInputEl.setAttribute('aria-expanded', 'true');
+  }
+});
+
+searchInputEl.addEventListener('blur', () => closeSuggestions());
+
+searchFormEl.addEventListener('submit', (event) => {
+  event.preventDefault();
+  clearTimeout(suggestTimer);
+  submitSearch(searchInputEl.value);
+});
+
+retryButton.addEventListener('click', () => {
+  if (currentArtist) {
+    // Do not serve the failure from cache on a retry.
+    artistSongsCache.delete(String(currentArtist.artistId));
+    loadArtist(currentArtist);
+  } else {
+    submitSearch(searchInputEl.value);
+  }
+});
 
 showMoreButton.addEventListener('click', () => {
   showingAllAlbums = !showingAllAlbums;
@@ -1097,7 +1452,5 @@ window.addEventListener('resize', () => {
   applyFlowTransforms();
 });
 
-retryButton.addEventListener('click', load);
-
-// The page has one job, so it starts working as soon as it opens.
-load();
+renderExamples();
+searchInputEl.focus();

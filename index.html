@@ -3,16 +3,37 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Mac Miller — Music Explorer</title>
+  <title>Music Explorer</title>
   <link rel="stylesheet" href="style.css" />
 </head>
 <body>
   <header class="header">
-    <p class="eyebrow">Artist profile</p>
-    <h1 class="title">Mac Miller</h1>
-    <p class="subtitle">
-      Curious statistics pulled from his catalogue on the iTunes Store.
-    </p>
+    <p class="eyebrow">Music Explorer</p>
+    <h1 class="title">Explore an artist's catalogue</h1>
+    <p class="subtitle">Search for anyone to see their releases, timeline and statistics.</p>
+
+    <!-- A form gives Enter-to-submit for free. The combobox roles tell assistive
+         tech that the input is backed by the suggestion list below it. -->
+    <form class="search" id="search-form" role="search" autocomplete="off">
+      <div class="search__field">
+        <input
+          class="search__input"
+          id="search-input"
+          type="text"
+          name="artist"
+          placeholder="Try “Mac Miller”, “Radiohead”, “Shakira”…"
+          aria-label="Artist name"
+          role="combobox"
+          aria-expanded="false"
+          aria-controls="suggestions"
+          aria-autocomplete="list"
+          autocomplete="off"
+          spellcheck="false"
+        />
+        <ul class="suggestions" id="suggestions" role="listbox" aria-label="Artist suggestions" hidden></ul>
+      </div>
+      <button class="button" type="submit" id="search-button">Search</button>
+    </form>
   </header>
 
   <main class="main">
@@ -20,8 +41,25 @@
          aria-live so screen readers announce state changes. -->
     <div class="status" id="status" role="status" aria-live="polite"></div>
 
+    <!-- Lets the user recover from a network error without reloading the page -->
+    <div class="retry">
+      <button class="button" type="button" id="retry-button" hidden>Try again</button>
+    </div>
+
+    <!-- First-run state: nothing has been searched yet -->
+    <div class="empty" id="empty-state">
+      <p class="empty__text">Nothing loaded yet — search for an artist above.</p>
+      <div class="empty__examples" id="empty-examples"></div>
+    </div>
+
     <!-- Only shown after a search succeeds, so a failure never reveals a half-built page -->
     <div id="content" hidden>
+
+      <div class="artist-head">
+        <p class="eyebrow">Artist profile</p>
+        <h2 class="artist-head__name" id="artist-name"></h2>
+        <p class="artist-head__meta" id="artist-meta"></p>
+      </div>
 
       <!-- Headline numbers: the four figures that frame everything below -->
       <section class="hero" id="hero" aria-label="Headline numbers"></section>
@@ -81,11 +119,6 @@
           <button class="button button--ghost" type="button" id="show-more-button" hidden></button>
         </div>
       </section>
-    </div>
-
-    <!-- Lets the user recover from a network error without reloading the page -->
-    <div class="retry">
-      <button class="button" type="button" id="retry-button" hidden>Try again</button>
     </div>
   </main>
 

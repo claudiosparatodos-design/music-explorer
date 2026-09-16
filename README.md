@@ -1,14 +1,14 @@
-# Music Explorer — Mac Miller
+# Music Explorer
 
-A small vanilla-JavaScript page that pulls Mac Miller's catalogue from the public iTunes Search API, derives a set of statistics from it, and presents them as headline numbers, fact cards, a per-year bar chart and album cards.
+A small vanilla-JavaScript page that searches any artist on the public iTunes Search API, pulls their catalogue, derives a set of statistics from it, and presents them as headline numbers, a cover-flow timeline, fact cards, a per-year bar chart and album cards.
 
 No build step, no dependencies, no server — three static files you open in a browser.
 
 ## What this does
 
-The page has one job and starts doing it the moment it opens:
+Type an artist's name, pick one of the suggestions that appear as you type, and the page does the rest:
 
-1. **Fetch** — requests Mac Miller's songs from the iTunes Search API.
+1. **Fetch** — requests that artist's songs from the iTunes Search API.
 2. **Transform** — reshapes the flat song list two ways: grouped into albums (tracks ordered, durations computed), and reduced into derived statistics.
 3. **Display** — renders four headline numbers, a cover-flow timeline, nine fact cards, a songs-per-year bar chart, and the album cards behind it all.
 
@@ -22,7 +22,15 @@ What you get:
 | Chart | Songs per release year, with years that had no releases left visibly empty |
 | Albums | One card per release — cover, year, genre, track list with durations, total and average length |
 
-**Every figure is computed live in the browser from the API response.** Nothing is hardcoded. Change `ARTIST` at the top of `script.js` and the whole page re-derives itself for someone else.
+**Every figure is computed live in the browser from the API response.** Nothing is hardcoded — searching a different artist re-derives the whole page.
+
+### Finding the artist
+
+The search box is an autocomplete. From the second character, and after 250 ms of quiet typing, it asks the API for matching **artists** (`entity=musicArtist`) and lists them with their genre. Arrow keys move through the list, Enter or a click picks one, Escape closes it.
+
+Picking a suggestion hands over an **`artistId`**, and the songs are then fetched from the `lookup` endpoint by that id rather than by name. That removes the ambiguity a name search carries: no chance of a different artist with a similar name, and no tracks that merely mention them. Submitting without picking a suggestion still works — the best match is taken.
+
+Two caches sit behind it, keyed by query and by artist id. Re-typing a query or revisiting an artist then costs no request at all, which matters because iTunes rate-limits at roughly 20 calls a minute and an autocomplete can burn through that quickly. Combined with the debounce, typing "radiohead" one letter at a time costs **one** request, not nine.
 
 ## How to run it
 
@@ -67,9 +75,14 @@ Tested in current Chromium-based browsers, Firefox and Safari. The only modern A
 
 [iTunes Search API](https://performance-partners.apple.com/search-api) — `https://itunes.apple.com/search`
 
-Request: `term=Mac Miller`, `attribute=artistTerm`, `media=music`, `entity=song`, `limit=200`.
+Two endpoints are used:
 
-`attribute=artistTerm` matches against the *artist* field rather than free text, so the response is songs **by** Mac Miller instead of every track that happens to mention him. That single parameter removes most of the noise a plain search returns.
+| Call | Endpoint | Why |
+| --- | --- | --- |
+| Suggestions | `search?term=…&entity=musicArtist&limit=8` | Asks for *artists*, not songs, so the dropdown lists people rather than tracks |
+| Catalogue | `lookup?id=<artistId>&entity=song&limit=200` | Fetches by id, so there is no name matching left to get wrong |
+
+The lookup answers with the artist record first and the tracks after it, so the response is filtered to `wrapperType === 'track'`.
 
 Chosen because it fits the constraints of a ~4-hour exercise:
 
@@ -141,6 +154,10 @@ The goal is that nothing leaves the user staring at a blank page, and the page i
 | HTTP 200 with a non-JSON body | Caught when parsing: "The iTunes API returned an unreadable response." |
 | HTTP 200 carrying an `errorMessage` field | The API's own message is shown — iTunes does not always signal errors with status codes |
 | Zero results | A clear message rather than an empty scaffold of zeroes |
+| No artist matches what was typed | The dropdown says so in place; submitting anyway gives "No artist found for X" and returns to the first-run screen, rather than looking like a crash |
+| Artist exists but has no songs | Named explicitly — "We found X, but the API returned no songs for them" |
+| Suggestion request fails | Fails silently and closes the dropdown; suggestions are a convenience, and the user can still submit, where errors *are* reported |
+| Two searches overlapping | Each carries a token; a response from a search the user has moved on from is discarded instead of overwriting the newer one |
 | Broken artwork URL | The `<img>` hides itself on `error` instead of showing a broken-image icon |
 | Malformed individual songs | Missing `collectionName`, `trackNumber`, `trackTimeMillis` or `releaseDate` are each handled with fallbacks; one bad record never discards the rest |
 | A statistic that cannot be computed | Its card is omitted entirely rather than rendered blank or as `NaN` |
@@ -155,8 +172,9 @@ Two further details:
 
 - **These are catalogue statistics, not popularity statistics.** The iTunes Search API exposes no play counts, chart positions or sales, so "busiest year" means *most songs released or re-released*, inflated by deluxe editions and reissues — not his most successful year. The page says so under the section heading rather than letting the number imply more than it is.
 - **No pagination.** One request at the API's 200-song maximum. For a catalogue with many reissues that still truncates, and because the API sorts by relevance rather than date, the cut-off is arbitrary. Incomplete albums are labelled, but the real fix is paging with an `offset`.
-- **No caching.** Every page load hits the network. A `sessionStorage` cache keyed by artist would make a reload instant; iTunes also rate-limits at roughly 20 calls/minute, which a cache would help stay under.
-- **Single fixed artist.** `ARTIST` is a constant, so comparing two artists side by side means editing the file. Putting the search box back and keeping several catalogues in memory would make it a comparison tool — a natural next step, and the version this one grew out of is in the git history.
+- **Caching is in-memory only.** It survives a search but not a page reload; `sessionStorage` would fix that in a few lines.
+- **One artist at a time.** The caches hold several catalogues, but only one renders. Showing two side by side would make it a comparison tool — the natural next step.
+- **Suggestions are not ranked by popularity.** They arrive in the API's own relevance order, so a well-known artist is not guaranteed the top row. The API exposes nothing to rank on.
 - **No automated tests.** `formatDuration`, `groupSongsByAlbum`, `findMostUsedWord` and `computeStats` are pure functions and the obvious first unit-test targets — rounding, missing fields, albums sharing a title, empty input, the guest-count double-count this version fixes. I verified those manually, plus every error path in-browser, but in a real project they would be Vitest cases in CI. The code is plain `<script>` tags with no module system, which is what made tests quick to skip; adding them would mean moving to ES modules first.
 - **Covers deep in the stack can't be clicked.** They are packed tightly enough that a nearer cover sits over their centre, so only the front cover and its immediate neighbours respond. That is how the original Cover Flow behaved too — you can click what you can see — and the slider reaches every release regardless, so I left it. Spreading the stack far enough to make every cover a target would lose the look entirely.
 - **Accessibility is decent, not audited.** Live region for status, a real table behind the chart, visible focus rings, `role="img"` with a summary label on the plot. Not done: a full keyboard pass over the results, or reduced-motion handling.
