@@ -1,0 +1,50 @@
+<!doctype html>
+<html lang="es-MX">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+  <title>Paquetería Express</title>
+  <meta name="description" content="Registro de paquetes con etiquetas QR, estado de envío y cobro.">
+  <meta name="theme-color" content="#0F1B2D">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="apple-mobile-web-app-title" content="Paq. Express">
+  <link rel="icon" href="icons/icon.svg" type="image/svg+xml">
+  <link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
+</head>
+<body>
+  <header id="top">
+    <div class="wrap bar">
+      <a class="brand" href="#" id="brand" aria-label="Paquetería Express, inicio">
+        <img src="icons/icon.svg" width="30" height="30" alt="">
+        <span>Paquetería <em>Express</em></span>
+      </a>
+      <span id="sync" class="sync" hidden></span>
+      <button id="menuBtn" class="icon-btn" type="button" aria-label="Menú" aria-haspopup="true" aria-expanded="false" hidden>
+        <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M4 7h16M4 12h16M4 17h16"/></svg>
+      </button>
+    </div>
+    <div id="menu" class="menu wrap" hidden></div>
+  </header>
+
+  <main class="wrap" id="app"><div class="empty"><h3>Abriendo…</h3></div></main>
+
+  <nav id="dock" class="dock" hidden>
+    <div class="wrap dock-in">
+      <button id="scanBtn" type="button" class="dock-scan">
+        <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" aria-hidden="true"><path d="M3 8V5a2 2 0 0 1 2-2h3M16 3h3a2 2 0 0 1 2 2v3M21 16v3a2 2 0 0 1-2 2h-3M8 21H5a2 2 0 0 1-2-2v-3M7 12h10"/></svg>
+        Escanear
+      </button>
+      <a id="newBtn" href="#nuevo" class="btn primary dock-new">+ Nuevo paquete</a>
+    </div>
+  </nav>
+
+  <div id="modal" class="modal" hidden></div>
+  <div id="toast" class="toast" role="status" hidden></div>
+  <div id="print" class="print-area" aria-hidden="true"></div>
+  <input id="scanFile" type="file" accept="image/*" capture="environment" hidden>
+
+  <script type="module" src="/src/main.js"></script>
+</body>
+</html>

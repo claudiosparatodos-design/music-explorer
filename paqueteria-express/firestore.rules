@@ -1,0 +1,15 @@
+rules_version = '2';
+// Solo las personas con cuenta en la app (creadas por el dueño en Firebase → Authentication)
+// pueden ver y modificar paquetes.
+service cloud.firestore {
+  match /databases/{database}/documents {
+    match /paquetes/{id} {
+      allow read: if request.auth != null;
+      allow create, update: if request.auth != null
+        && request.resource.data.destinatario is string
+        && request.resource.data.destinatario.size() > 0
+        && request.resource.data.destinatario.size() < 200;
+      allow delete: if request.auth != null;
+    }
+  }
+}
